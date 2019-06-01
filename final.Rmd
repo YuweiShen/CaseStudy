@@ -1,0 +1,418 @@
+---
+title: "在线旅游产品销售分析"
+author: "沈雨薇 2016200620"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    toc: TRUE
+    highlight: github
+---
+
+## 数据初步分析与整理
+
+&emsp;&emsp;在查看数据集信息，除去三个月成交量的因变量之后，思考一般人去旅游的流程：
+
+- 首先是筛选阶段，一般人都选择在时间有限的公共假期或者年休假进行出游，因此会先确定旅游的大概时间和预算budget，以及出行的目的地和出行的方式（自助游、半自助游）等。
+- 第二阶段是货比三家阶段，在第一阶段筛选出来的项目中仔细比较产品特色、套餐所含内容以及景点等信息，在对产品观感差不多的情况下，选择性价比最高的产品或者选择用户反馈最好、商家信用评级最高的产品。
+
+
+因此，可以将自变量可以分成以下几类:
+
+- 产品筛选变量
+  - 因子型，旅游类型
+  - 因子型，目的地
+  - 因子型，景点个数
+  - 因子型，行程长度
+  - 字符型，度假项目主标题
+- 产品比较变量
+  - 字符型，套餐
+  - 字符型，产品特色
+- 商家信息变量：
+  - 字符型，商家名称
+  - 因子型或者数量型，信用评级
+  - 服务承诺
+- 价格驱动变量：
+  - 字符型，活动信息
+  - 数量型，价格
+- 用户反馈变量：
+  - 数量型，满意度
+  - 数量型，评论数
+  - 数量型，商家评级
+  
+&emsp;&emsp;值得注意的是：由于datalist中的商家全部为BearTrip认证商家，可以认为信用都比较好，因此信用是否有用尚待验证
+```{r}
+rm(list=ls())
+dat<-read.csv('dat.csv')
+summary(dat) #查看数据集信息
+dat<-read.csv('dat.csv',stringsAsFactors = F,encoding='utf-8')#将字符型变量保持原状
+```
+
+## 生成衍生变量
+
+### 活动优惠信息提取
+&emsp;&emsp;注意到活动信息中有多个项目，故可以把活动信息分开.首先确认有多少种活动，然后把相应的活动信息按照种类分开，选择其中有效的信息新建变量（如果每条数据都包含了这个信息，则是无效信息，因为没有variance）。最终得到的变量有礼品卡、多人立减、优惠信息、专享红包、早订优惠、会员价。
+
+&emsp;&emsp;对变量含义的解释
+```
+礼品卡：逻辑变量，TRUE代表可以使用礼品卡
+多人立减：逻辑变量，TRUE代表可以多人立减
+优惠信息：逻辑变量，TRUE代表可以好评返现
+专享红包：逻辑变量，TRUE代表可以用专享红包
+早订优惠：逻辑变量，TRUE代表早订可以优惠
+会员价：逻辑变量，TRUE代表会员有优惠
+```
+
+
+```{r}
+library(stringr)
+n<-nrow(dat) 
+n #一共有几条数据
+##查看有多少种活动##
+inf<- strsplit(dat$活动信息, "|", fixed = T)  # 使用'|'进行分割
+infsum<-as.data.frame(table(unlist(inf))) #查看促销信息的种类
+infsum[order(infsum$Freq,decreasing=TRUE),]#按照出现频率进行排序
+
+##提取活动信息新变量##
+dat$礼品卡 <- str_detect(dat$活动信息,"礼品卡")==T
+dat$多人立减 <- str_detect(dat$活动信息,"多人立减")==T
+dat$优惠信息 <- str_detect(dat$活动信息,"优惠信息")==T
+dat$专享红包 <- str_detect(dat$活动信息,"专享红包")==T
+dat$早订优惠 <- str_detect(dat$活动信息,"早订优惠")==T
+dat$会员价<-str_detect(dat$活动信息,"会员价")==T
+
+```
+
+
+### 项目类型提取
+&emsp;&emsp;根据度假项目主标题，可以提取项目类型,如跟团游、私家游等
+
+&emsp;&emsp;对变量含义的解释与说明
+```
+项目类型最终一共有四种:跟团游,半自助游,自由行,私家团
+```
+```{r}
+##将中文标点替换成英文标点，以便下一步处理##
+dat$度假项目主标题<-gsub('【','(',dat$度假项目主标题)
+dat$度假项目主标题<-gsub('】',')',dat$度假项目主标题)
+##找到包含出游信息的括号##
+type<-str_match(dat$度假项目主标题, "\\(.*\\)")
+type<- strsplit(type, ")", fixed = T) 
+type<-sapply(type,function(x){return(x[1])})
+##添加新变量##
+dat$项目类型<-substr(type,start=2,stop=-1)<-str_sub(type,2,-1)
+
+summary(factor(dat$项目类型))#查看项目类型
+#发现xxx·促销和xxx是一个意思，故将二者合并
+dat$项目类型[str_detect(dat$项目类型,'半自助游')]<-'半自助游'
+dat$项目类型[str_detect(dat$项目类型,'跟团游')]<-'跟团游'
+dat$项目类型[str_detect(dat$项目类型,'自由行')]<-'自由行'
+dat$项目类型[str_detect(dat$项目类型,'私家团')]<-'私家团'
+summary(factor(dat$项目类型))#查看项目类型
+```
+
+### 服务承诺信息提取
+&emsp;&emsp;注意到服务承诺中有多个项目，故可以把服务承诺按照项目分开.首先确认有多少种服务承诺，然后把相应的服务承诺按照种类分开,新建有效变量。最终得到的变量有铁定横团，无自费，无购物，如实描述，随时退，出行保障，当日可定
+
+&emsp;&emsp;对变量含义的解释
+```
+铁定成团：逻辑型，TRUE代表一定能成团
+无自费：逻辑型，TRUE代表没有附加费用和强迫自费项目
+无购物：逻辑型，TRUE代表没有强迫购物
+如实描述：逻辑型，TRUE代表商家承诺沟通内容真实有效
+随时退：逻辑型，TRUE代表未验证消费随时退款
+出行保障：逻辑型，TRUE代表如果卖家导致买家无法出行，卖家承担损失
+当日可定：逻辑型，TRUE代表当天即可出行
+```
+
+```{r}
+##查看有多少种服务承诺##
+serv<- strsplit(dat$服务承诺, ":", fixed = T)  # 使用':'进行分割
+servsum<-as.data.frame(table(unlist(serv)))
+servsum[order(servsum$Freq,decreasing = T),]
+##提取服务承诺新变量##
+dat$铁定成团<- str_detect(dat$服务承诺,"铁定成团")==T
+dat$无自费<- str_detect(dat$服务承诺,"无自费")==T
+dat$无购物<- str_detect(dat$服务承诺,"无购物")==T
+dat$如实描述<- str_detect(dat$服务承诺,"如实描述")==T
+dat$随时退<- str_detect(dat$服务承诺,"随时退")==T
+dat$出行保障<- str_detect(dat$服务承诺,"出行保障")==T
+dat$当日可定<- str_detect(dat$服务承诺,"当日可定")==T
+
+```
+
+### 旅行社规模提取
+&emsp;&emsp;对旅行社推出的项目个数进行统计，旅行社推出的项目越多，说明他们的规模越大。新生成的变量：规模，数值型变量，代表该商家推出的项目总个数.
+
+```{r}
+##统计商家名称频率##
+scalesum<-as.data.frame(table(dat$商家名称))
+colnames(scalesum)<-c('商家名称','规模')
+##合并两个数据框##
+dat<-merge(dat,scalesum,by='商家名称')
+```
+
+### 性价比提取
+&emsp;&emsp;对于一些价格敏感的用户，他们更喜欢挑选性价比比较高的旅行。性价比主要由两部分组成，一部分是价格，另一部分是消费者愿意为产品支付的价格；因此，我们可以定义一个消费者剩余函数。迟雯萍（2013）在《浅析消费者剩余理论在旅游产品定价中的运用》中提到，消费者剩余是购买者愿意为某种产品支付的量减去其为此产品实际支付的量。在本次案例分析中，可以认为消费者剩余是基于消费者感知质量的市场预测价格减去此产品的实际价格。也即我们首先对影响旅行社定价的因素进行提取，建立一个旅行社定价的回归模型，将该回归模型的残差除以产品实际定价定义为性价比。即
+$$性价比=\frac{消费者剩余}{实际价格},\\消费者剩余=基于产品价值的预测价格-产品实际价格=残差$$
+
+&emsp;&emsp;回归模型的残差有正有负，且残差之和总是0，残差越大，说明消费者剩余越高;残差越小，说明消费者剩余越低。而且由回归的相关理论，残差和自变量系数之间是不相关的，故引入该变量不会产生过强的共线性，可以将其提取成一个用于预测销量的变量。如果不从消费者的角度来看，性价比其实也可以反映市场的竞争激烈程度。如果消费者剩余的绝对值非常小，那么可以认为相关的项目之间竞争非常激烈，以至于定价接近了纳什均衡点。
+
+&emsp;&emsp;如何提取消费者的感知价值变量呢？从生活实际出发，项目的类型、持续天数、项目的景点数目、项目的出行方式和项目居住的酒店都会影响消费者的感知质量。
+
+&emsp;&emsp;居住酒店的提取标准参考携程的分类——高档=4星，豪华=5星，舒适=3星，经济=2星以下
+```{r}
+library(plyr)
+##提取项目天数##
+dat$天数<- str_extract(dat$套餐,'[0-9]+天')
+dat$天数<-str_sub(dat$天数,1,-2)
+dat$天数<-as.numeric(dat$天数)
+##景点数##
+dat$景点数<-str_extract(dat$套餐,'[0-9]+个景点')
+dat$景点数<-str_sub(dat$景点数,1,-4)
+dat$景点数<-as.numeric(dat$景点数)
+#由于景点数有缺失值，所以考虑用对应的天数的景点数均值来填充
+meanspot<-ddply(dat,'天数',summarise,平均景点数=mean(景点数,na.rm=T))
+dat<-merge(dat,meanspot,by='天数')
+dat$景点数[is.na(dat$景点数)]<-dat$平均景点数[is.na(dat$景点数)]
+##是否做飞机##
+dat$飞机<-str_detect(dat$套餐,'飞机')==T
+##酒店档次##
+dat$酒店<-rep(0,n) #先初始化，后面再改
+dat$酒店[str_detect(dat$套餐,'豪华')]<-'5星'
+dat$酒店[str_detect(dat$套餐,'五星')]<-'5星'
+dat$酒店[str_detect(dat$套餐,'高档')]<-'4星'
+dat$酒店[str_detect(dat$套餐,'四星')]<-'4星'
+dat$酒店[str_detect(dat$套餐,'舒适')]<-'3星'
+dat$酒店[str_detect(dat$套餐,'三星')]<-'3星'
+dat$酒店[dat$酒店==0]<-'2星'
+
+##首先建立加权价格预测回归模型##
+fitprice<-lm(log(价格)~酒店+景点数+飞机+天数+项目类型+旅游类型+酒店*天数,data=dat,weight=天数)
+summary(fitprice)#发现基本都是显著的
+##计算消费者剩余##
+res<-exp(predict(fitprice,dat))-dat$价格
+##添加性价比变量##
+dat$性价比<-res/dat$价格
+summary(dat$性价比)
+```
+
+
+## 描述性分析
+
+### 销量和项目类型
+&emsp;&emsp;首先看一下三个月销量的直方图，发现三个月的成交量严重右偏，所以可以对销量数据进行分箱操作。并令分割点为-Inf,20,25,30,40,50,Inf.从图中可以看出，大部分项目的三个月销量都在20-30之间。
+
+&emsp;&emsp;从项目类型的角度来说，大部分项目为跟团游，其次是自由行，再次是半自助游，最少的是私家团。其中，半自助游主要是中等销量。
+
+```{r}
+library(ggplot2)
+## 设置字体##
+windowsFonts(kaiti=windowsFont('楷体'),zhongsong=windowsFont('华文中宋'))
+
+
+## 画销量直方图##
+p1<-ggplot(data=dat,mapping=aes(dat$三个月成交量))+
+    geom_histogram(bins=10,fill='lightcoral',color='black',size=1)+#按照项目类型填充颜色
+    ggtitle('销量直方图')
+p1
+
+##对销量进行分箱
+dat$销量分箱<-cut(dat$三个月成交量,breaks=c(-Inf,20,25,30,40,50,Inf))
+
+## 画分箱后的销量直方图（按项目类型分）
+p<-ggplot(data=dat,mapping=aes(x=dat$销量分箱,fill=项目类型))+
+   geom_bar(stat = 'count')+#按照项目类型填充颜色
+  labs(x='销量',y='项目数')+#更改坐标轴名字
+  ggtitle('销量项目数直方图(按项目类型细分)')+
+  scale_fill_brewer()+
+  theme(axis.title.x=element_text(family='kaiti'),axis.title.y=element_text(   family='kaiti'),plot.title = element_text(family='zhongsong',face='bold',size=rel(1.5),hjust = 0.5))
+p
+
+```
+
+### 销量和行程长度
+
+&emsp;&emsp;由于销量具有明显的右偏性，故在画图的时候考虑设置一个合理的值域再画图。不妨设置值域为15-40.
+
+&emsp;&emsp;从箱线图中可以看出，短期旅行的销量高于中期，高于长期。图中的白点为箱线图的均值，也可以看出短期旅行的销量平均值明显高于中期和长期，但是中位数大小在图中不是很能体现，这说明短期旅行中有销量特别高的异常值。大致可以得到行程越短，销量越高的趋势。
+```{r}
+
+#按照成交量中位数对行程长度进行排序##
+bymedian<-with(dat,reorder(factor(dat$行程长度),dat$三个月成交量,FUN=median,na.rm=T)) 
+##画箱线图##
+p<-ggplot(dat,mapping =aes(x=bymedian,y=dat$三个月成交量,fill=bymedian))+
+  geom_boxplot(varwidth=TRUE)+ #使箱线图的宽度反映数据量的大小
+  labs(x='行程长度',y='销量',title='销量关于行程长度的箱线图')+
+  ylim(15,40)+
+  theme(axis.title.x=element_text(family='kaiti'),axis.title.y=element_text(   family='kaiti'),plot.title =   element_text(family='zhongsong',face='bold',size=rel(1.5),hjust = 0.5))+
+  stat_summary(fun.y = mean,geom='point',shape=23,fill='white',size=2)+#标出平均值的位置
+  scale_fill_brewer(palette = 'BuPu')
+p
+
+
+```
+
+### 行程长度和项目类型
+&emsp;&emsp;从项目数量的角度来看，长期项目和短期项目个数差不多，中期项目的个数最少。
+
+&emsp;&emsp;如果按照项目类型分，跟团游的项目中长期项目最多，短期其次，中期最少；自由行的项目中，短期最多，中期次之，长期最少；半自助游项目中则是长期最多，短期最少。私家团只在长期项目和中期项目中有出现，中期项目比长期项目要多。私家团可以看作是自由行的推广，一般都是几户人家一起自由行便可以称作私家团。
+```{r}
+p1<-ggplot(data=dat,mapping=aes(x=dat$行程长度))+
+   geom_bar(stat = 'count',fill='lightcoral',color='black',size=1)+#填充颜色
+  labs(x='项目数量',y='项目数')+#更改坐标轴名字
+  ggtitle('项目数量直方图')+
+  theme(axis.title.x=element_text(family='kaiti'),axis.title.y=element_text(   family='kaiti'),plot.title = element_text(family='zhongsong',face='bold',size=rel(1.5),hjust = 0.5))
+p1
+
+p<-ggplot(data=dat,mapping=aes(x=dat$行程长度,fill=项目类型))+
+   geom_bar(stat = 'count',position='dodge')+#按照项目类型填充颜色
+  labs(x='项目数量',y='项目数')+#更改坐标轴名字
+  ggtitle('项目数量直方图(按项目类型细分)')+
+  scale_fill_brewer(palette='Reds')+
+  theme(axis.title.x=element_text(family='kaiti'),axis.title.y=element_text(   family='kaiti'),plot.title = element_text(family='zhongsong',face='bold',size=rel(1.5),hjust = 0.5))
+p
+
+```
+
+### 项目价格
+&emsp;&emsp;项目价格也呈现右偏的趋势，因此将项目价格取对数之后画直方图，发现大部分项目的价格都在$e^5-e^{10}$之间。
+
+&emsp;&emsp;根据销量分箱和项目价格的箱线图，可以看到随着销量增大，价格中位数和均值（小白点）有下降的趋势，故可以得到这样的初步结论，即销量高的项目，价格一般偏低。
+
+```{r}
+##价格的分布##  
+p1<-ggplot(data=dat,mapping=aes(log(dat$价格)))+
+    geom_histogram(bins=10,fill='lightblue',color='white',size=1)+#按照项目类型填充颜色
+    ggtitle('对数价格直方图')
+p1
+
+##价格和销量##
+p<-ggplot(dat,mapping =aes(x=dat$销量分箱,y=log(dat$价格),fill=dat$销量分箱))+
+  geom_boxplot(varwidth=TRUE)+ #使箱线图的宽度反映数据量的大小
+  labs(x='销量分箱',y='对数价格',title='对数价格关于销量分箱的箱线图')+
+  stat_summary(fun.y = mean,geom='point',shape=23,fill='white',size=2)+
+  scale_fill_brewer(palette='YiGn')
+p
+```
+
+### 销量和目的地（旅游类型）的关系
+&emsp;&emsp;我们可以对每个目的地进行销量分析，即对每个不同的目的地取销量均值，发现目的地是‘八达岭长城’的销量最高，远高于其他地方，其他国内的目的地例如长沙、颐和园等平均销量也很高。所以可以考虑把北京周边的目的地合并成一个变量，把其他国内省份合成一个变量。发现这就是旅游类型.
+
+&emsp;&emsp;旅游类型呈现的平均销量特点和目的地类似，表现出北京周边游平均销量大于国内（包括港澳台）游销量大于周边地区家销量，大于非亚洲地区销量的特点。
+
+```{r}
+##目的地##
+desmean<-ddply(dat,'目的地',summarise,平均销量=mean(三个月成交量))
+
+p<-ggplot(data=desmean,mapping=aes(x=desmean$目的地,y=desmean$平均销量))+
+   geom_bar(stat = 'identity',fill='lightblue',color='white',size=1)+
+  labs(x='目的地',y='平均销量')+#更改坐标轴名字
+  ggtitle('项目平均销量与目的地柱形图')+
+  geom_text(aes(label=round(desmean$平均销量)),vjust=1.5)+
+  theme(axis.text.x = element_text(face='bold',size=rel(0.9),angle = 30,family='kaiti',vjust=0.5),plot.title = element_text(face='bold',size=rel(1.5),hjust =0.5,family="kaiti"),axis.title = element_text(face='bold',size=rel(0.9),family='kaiti')) 
+p
+
+##旅游类型##
+desmean1<-ddply(dat,'旅游类型',summarise,平均销量=mean(三个月成交量))
+
+p<-ggplot(data=desmean1,mapping=aes(x=desmean1$旅游类型,y=desmean1$平均销量))+
+   geom_bar(stat = 'identity',fill='lightcoral',color='white',size=1)+
+  labs(x='旅游类型',y='平均销量')+#更改坐标轴名字
+  ggtitle('项目平均销量与旅游类型柱形图')+
+  geom_text(aes(label=round(desmean1$平均销量)),vjust=1.5)+
+  theme(axis.text.x = element_text(face='bold',size=rel(0.9),
+  family='kaiti',vjust=0.5),plot.title = element_text(face='bold',size=rel(1.5),hjust =0.5,family="kaiti"),axis.title = element_text(face='bold',size=rel(0.9),family='kaiti')) 
+p
+
+```
+
+## 建立回归模型
+&emsp;&emsp;由于三个月成交量是明显的右偏趋势，所以可以使用对数线性模型来建立销量和自变量的模型,由于成交量中有一些是0，这样会导致取了log之后是负数，故不妨重新设一列y。
+
+&emsp;&emsp;经过分析，发现价格这一连续变量存在较严重的异方差现象，所以考虑建立加权回归模型。在建立全模型之后，发现调整过的R方比较小，可能是因为有些不显著的变量混在里面，导致原本显著的变量也变得不显著了，因此用逐步回归法对变量进行选择。
+
+&emsp;&emsp;经过AIC和BIC两种准则的比较之后，发现两者的调整R方差别不太大，但是我们的目的是为了给在线旅游业的发展提供尽可能多的建议，所以希望显著的因子多一些比较好，故在这里选用AIC模型。
+
+&emsp;&emsp;通过库克距离删除强影响点，然后再重新建立模型，用DAAG包进行变量共线性的诊断，发现除了自由行、跟团游之外，其他的vif值都小于10,而由于这两者是因子型变量的水平，所以无需去除。
+```{r}
+##重新设置一列y##
+dat$y<-rep(0,n)
+dat$y[dat$三个月成交量>0]<-log(dat$三个月成交量[dat$三个月成交量>0])
+##建立加权全模型##
+fit<-lm(y~性价比+飞机+酒店+景点数+规模+当日可定+出行保障+随时退+如实描述+无购物+无自费+铁定成团+项目类型+会员价+早订优惠+专享红包+优惠信息+多人立减+礼品卡+景点个数+行程长度+价格+旅游类型+factor(信用评级)+用户评价数量+factor(商家评级)+满意度+天数,data=dat,weight=1/价格)
+summary(fit)
+##使用逐步回归法##
+fit.aic<-step(fit,direction='both',trace=F)#AIC模型
+summary(fit.aic)
+fit.bic<-step(fit,direction='both',k=log(n),trace=F)#BIC模型
+summary(fit.bic)
+##进行回归诊断##
+par(mfrow=c(2,2))
+plot(fit.aic)
+##通过库克距离找出强影响点，将其删除##
+cook<-cooks.distance(fit.aic)
+cook[cook>0.1]
+dat<-dat[-c(3,94,282,323,406,482,485,488,499,507,1045),]
+##重新建立回归模型##
+fit<-lm(y~性价比+飞机+酒店+景点数+规模+当日可定+出行保障+随时退+如实描述+无购物+无自费+铁定成团+项目类型+会员价+早订优惠+专享红包+优惠信息+多人立减+礼品卡+景点个数+行程长度+价格+旅游类型+factor(信用评级)+用户评价数量+factor(商家评级)+满意度+天数,data=dat,weight=1/价格)
+fit.aic<-step(fit,direction='both',trace=F)#AIC模型
+summary(fit.aic)
+##进行变量共线性的诊断##
+library(DAAG)
+vif(fit.aic)
+```
+
+## 回归模型结果的解释与在线旅游业发展建议
+
+&emsp;&emsp;在众多的变量中，回归模型最终剩下的解释变量可以认为是影响在线旅游产品销量的主要隐私，更进一步的，可以按照显著程度可以分成以下几类
+
+- 非常显著: 截距项，性价比,有会员价,有早定优惠,支持礼品卡支付，旅游类型，信用评级，用户评价数量，满意度.
+- 比较显著: 天数、保证铁定成团、无购物、随时退、当日可定、商店的规模、酒店类型、项目类型
+- 勉强显著: 飞机出行、景点数、无自费项目
+
+按照变量的实际含义，可以分别对变量的含义做出解释。</br>
+在控制其他因素不变的情况下:</br>
+从产品本身内容和特色来说，
+
+- 行程天数每增加一天，项目的销量下降1.9% 说明短期项目的销量相对来说比长期项目要高，可能因为短期项目购买地更频繁。
+- 景点个数每增加一个，销量增加0.3% 景点个数增加一定程度上意味着旅行项目的充实程度增加。
+- 坐飞机比不做飞机的项目销量高5.2% 做飞机往往比做大巴有更高的舒适度。
+- 从旅行的目的地来看，东南亚的项目比北京周边游的销量低1%，港澳台的项目比北京周边游的销量低5.7%，国内游的项目比北京周边游的项目低6.7%,东亚的项目比北京周边游的销量高24.9%，欧洲的项目比北京周边游高6.9%，每周的项目比北京周边游高12.3%。说明现在越来越多的人喜欢到较远的地区游玩，不再满足于国内长期游玩。
+- 从项目类型来看，跟团游的销量比半自助游低1.7%，私家团的销量比半自助游高1.5%，自由行的销量比半自助游高11%。说明越来越多得人想自己探索出行，变得更加自主，而不是一味地听旅行团的摆布。
+- 从酒店来看，住3星酒店的项目销量比住经济型酒店的项目销量低6.1%,4星酒店的比经济酒店的低7.6%,5星酒店的销量比经济酒店的低0.5%. 这一定程度上说明出行者对酒店星级看中的程度不太高，只要能接受就行。
+
+
+从商家信息来说，
+
+- 商家的规模越大，即提供的项目数越多，销量就相对越高。商家能提供的项目数每多一个，该项目的销量就增加0.06% 这符合商业的一般规律，大商店总是不用太担心销路。
+- 商家有无购物承诺的比没有的销量高4.7%；商家有随时退款承诺的比没有的销量高3.3%；商家有铁定成团承诺的比没有的销量高3.8%；商家有无自费承诺的销量比没有的低4.7%；商家有当日可定承诺的销量比没有的低8.7%。这说明出行者在游玩时大多数希望自己的出行时间得到保证，能及时出去玩，而且不强制购物，能玩得开心。这反映了在线旅游产品中消费者的享乐主义消费观。
+- 商家的信用评级较高的情况下，销量较高。信用评级为1星的比0星（0星信用最高）的销量低4.6%,2星的比0星的销量低5.7%,3星的比0星的低2.5%,4星的比零星的低4.7%,5星的比0星的销量低11.8%. 这也说明了1-5星级和超脱5星的0星之间，信用口碑是有着本质区别的。
+
+从用户反馈的角度来说,
+
+- 用户评价数量每增加一条，项目的期望销量就增加0.3%。说明用户的评价数可以带来成交量，同时成交量的增加又可以促进评价数量的增多，这是一个正反馈的过程。
+- 用户满意度每提高一分，项目期望销量就剑豪17.5%。这可能是由于有些项目成交量过少导致零星的几个人就有100%好评，也可能是因为有些商家找人刷好评（好评返现）而造成的后果。
+
+从产品的价格促销角度来说，
+
+- 产品的性价比越高，项目的期望销量就越高。产品的性价比每增加一个单位，项目的期望销量就增加0.3%
+- 项目有会员价促销的比没有会员价促销的销量期望高81.9%
+- 项目有早订优惠促销的比没有的销量期望高108.1%
+- 项目有礼品卡促销的比没有的销量期望高11.6%
+- 项目有优惠信息促销的比没有的销量期望高8.6%.
+
+因此，综合显著变量和上面的解释，可以提出这样的建议：
+
+- 商家为了增大销量，可以努力提高自己产品的性价比，提供更多的消费者剩余价值，相对压缩自己的利润空间
+- 商家可以选择更多样的促销服务，如支持礼品卡支付、提供早定优惠、为会员提供更优质的服务等来提高销量。
+- 商家可以商家可以多推出一些自由行、半自由行等项目的比例，减少跟团游的比例，增多去较发达国家的游玩项目比例，适当减少国内游玩的项目比例，优化项目结构
+- 商家可以努力扩大自己项目数量，推陈出新，扩大规模
+- 商家可以努力提高自己的信用评级，早日脱离1-5星的范畴
+- 商家不要盲目地追求五星好评，应该鼓励顾客多评论，实事求是的文字评价对销量的提高有更大的影响
+
+```{r}
+summary(fit.aic)
+```
+
+
